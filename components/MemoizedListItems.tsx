@@ -94,9 +94,11 @@ interface StudentListItemProps {
   email?: string;
   isDeleting: boolean;
   isConfirming: boolean;
+  isResettingDevice?: boolean;
   onDelete: () => void;
   onCancelDelete: () => void;
   onConfirmDelete: () => void;
+  onResetDevice?: () => void;
 }
 
 export const MemoizedStudentListItem = React.memo<StudentListItemProps>(
@@ -106,9 +108,11 @@ export const MemoizedStudentListItem = React.memo<StudentListItemProps>(
     email,
     isDeleting,
     isConfirming,
+    isResettingDevice,
     onDelete,
     onCancelDelete,
-    onConfirmDelete
+    onConfirmDelete,
+    onResetDevice
   }) => (
     <div
       className="bg-gradient-to-r from-white/5 to-transparent border border-white/10 p-4 rounded-2xl flex items-center justify-between hover:border-white/20 transition-all group will-change-transform"
@@ -139,12 +143,23 @@ export const MemoizedStudentListItem = React.memo<StudentListItemProps>(
           </button>
         </div>
       ) : (
-        <button
-          onClick={onDelete}
-          className="px-4 py-2 bg-transparent border border-red-500 text-red-400 rounded-lg text-xs font-bold hover:bg-red-500/20 transition-all flex items-center gap-2"
-        >
-          🗑️ DELETE
-        </button>
+        <div className="flex items-center gap-2">
+          {onResetDevice && (
+            <button
+              onClick={onResetDevice}
+              disabled={isResettingDevice}
+              className="px-3 py-2 bg-gradient-to-r from-[#ffa500] to-[#ff8c00] text-black text-xs font-bold rounded-lg hover:shadow-[0_0_20px_#ffa500] transition-all disabled:opacity-50 flex items-center gap-1"
+            >
+              🔓 RESET LOCK
+            </button>
+          )}
+          <button
+            onClick={onDelete}
+            className="px-4 py-2 bg-transparent border border-red-500 text-red-400 rounded-lg text-xs font-bold hover:bg-red-500/20 transition-all flex items-center gap-2"
+          >
+            🗑️ DELETE
+          </button>
+        </div>
       )}
     </div>
   ),
@@ -154,7 +169,8 @@ export const MemoizedStudentListItem = React.memo<StudentListItemProps>(
       prevProps.name === nextProps.name &&
       prevProps.email === nextProps.email &&
       prevProps.isDeleting === nextProps.isDeleting &&
-      prevProps.isConfirming === nextProps.isConfirming
+      prevProps.isConfirming === nextProps.isConfirming &&
+      prevProps.isResettingDevice === nextProps.isResettingDevice
     );
   }
 );

@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { LogOut, Trash2, Plus, Search, Mail, Download, Users, AlertTriangle, Lock, Settings } from 'lucide-react';
+import { LogOut, Trash2, Plus, Search, Mail, Download, Users, AlertTriangle, Lock, Settings, Unlock } from 'lucide-react';
 import PhotoModal from './PhotoModal';
 import { MemoizedPresentItem, MemoizedAbsentItem, MemoizedStudentListItem } from './MemoizedListItems';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 import { validatePasswordStrength, hashPassword, comparePassword } from '../utils/passwordUtils';
-import { getDatabase, ref, set, onValue, off } from 'firebase/database';
+import { getDatabase, ref, set, onValue, off, update } from 'firebase/database';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -40,6 +40,7 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
   const [deletingStudent, setDeletingStudent] = useState<string | null>(null);
   const [confirmDeleteRegNo, setConfirmDeleteRegNo] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [resettingDevice, setResettingDevice] = useState<string | null>(null);
   
   // Clear Attendance State
   const [clearConfirmStage, setClearConfirmStage] = useState(0); // 0 = no, 1 = first confirm, 2 = second confirm
@@ -67,6 +68,28 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
       off(passwordRef);
     };
   }, []);
+
+  // Handle Device Lock Reset
+  const handleResetDeviceLock = async (regNo: string) => {
+    setResettingDevice(regNo);
+    try {
+      const db = getDatabase();
+      const studentRef = ref(db, `students/${regNo}`);
+      await update(studentRef, { deviceId: null });
+      setMessage({
+        type: 'success',
+        text: `✅ Device lock reset for ${regNo}. This student can now use a different device.`
+      });
+      setTimeout(() => setMessage(null), 3000);
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: `❌ Error resetting device lock: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+    } finally {
+      setResettingDevice(null);
+    }
+  };
 
   // Calculate metrics
   const totalStudents = Object.keys(allStudents).length;
@@ -384,8 +407,10 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                       email={student.email}
                       isDeleting={deletingStudent === regNo}
                       isConfirming={confirmDeleteRegNo === regNo}
+                      isResettingDevice={resettingDevice === regNo}
                       onDelete={() => setConfirmDeleteRegNo(regNo)}
                       onCancelDelete={() => setConfirmDeleteRegNo(null)}
+                      onResetDevice={() => handleResetDeviceLock(regNo)}
                       onConfirmDelete={async () => {
                         setDeletingStudent(regNo);
                         try {
