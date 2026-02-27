@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import emailjs from '@emailjs/browser';
 import { LogOut, Trash2, Plus, Search, Mail, Download, Users, AlertTriangle, Lock, Settings, Unlock } from 'lucide-react';
 import PhotoModal from './PhotoModal';
 import { MemoizedPresentItem, MemoizedAbsentItem, MemoizedStudentListItem } from './MemoizedListItems';
@@ -46,6 +47,33 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
   // Clear Attendance State
   const [clearConfirmStage, setClearConfirmStage] = useState(0); // 0 = no, 1 = first confirm, 2 = second confirm
   const [clearingAttendance, setClearingAttendance] = useState(false);
+
+  // Helper: send single absence email via EmailJS for debugging/status
+  const sendAbsenceEmail = (name: string, regNo: string, email: string) => {
+    const templateParams = {
+      student_name: name,
+      registration_number: regNo,
+      attendance_date: new Date().toLocaleDateString(),
+      to_email: email
+    };
+    emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', templateParams, 'YOUR_PUBLIC_KEY')
+      .then(() => console.log('Email Sent Successfully to', email))
+      .catch((error) => console.error('Email Failed', error));
+  };
+
+  // wrapper used by buttons to send alerts and track state
+  const triggerAbsenceAlerts = () => {
+    // send individual emails for visibility
+    absentList.forEach(student => {
+      if (student.email) {
+        sendAbsenceEmail(student.name, student.regNo, student.email);
+      }
+    });
+    // also call parent handler if provided
+    onSendEmails?.((regNos) => {
+      setEmailsSentTo(new Set([...emailsSentTo, ...regNos]));
+    });
+  };
 
   // Change Password State
   const [currentPassword, setCurrentPassword] = useState('');
@@ -217,9 +245,7 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                 <h3 className="text-lg font-black mb-6">ACTIONS</h3>
                 <div className="space-y-3">
                   <button
-                    onClick={() => onSendEmails?.((regNos) => {
-                      setEmailsSentTo(new Set([...emailsSentTo, ...regNos]));
-                    })}
+                    onClick={triggerAbsenceAlerts}
                     className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_30px_#ff007a] transition-all active:scale-95"
                   >
                     📧 SEND ABSENCE ALERTS
@@ -455,9 +481,7 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                 <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
                   <p className="text-gray-400 text-sm mb-4">Send absence notifications to all absent students via email</p>
                   <button
-                    onClick={() => onSendEmails?.((regNos) => {
-                      setEmailsSentTo(new Set([...emailsSentTo, ...regNos]));
-                    })}
+                    onClick={triggerAbsenceAlerts}
                     className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_30px_#ff007a] transition-all active:scale-95"
                   >
                     📧 SEND ABSENCE ALERTS
