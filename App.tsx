@@ -158,29 +158,28 @@ export default function App() {
     }
   };
 
-  // --- Send Absence Alerts to Parents ---
-  const handleSendEmailAlerts = async () => {
+  // --- Send Absence Alerts to Students ---
+  const handleSendEmailAlerts = async (onEmailsSent?: (sentRegNos: string[]) => void) => {
     if (absentList.length === 0) {
       setEmailStatus({ type: 'idle', message: 'No absent students to notify' });
       return;
     }
 
     setSendingEmails(true);
-    setEmailStatus({ type: 'sending', message: `📧 Sending alerts to ${absentList.length} parents...` });
+    setEmailStatus({ type: 'sending', message: `📧 Sending absence alerts to ${absentList.length} students...` });
 
     try {
       const emailsToSend = absentList
-        .filter(student => student.parentEmail)
+        .filter(student => student.email)
         .map(student => ({
-          parent_email: student.parentEmail!,
+          parent_email: student.email!,
           student_name: student.name,
           registration_number: student.regNo,
-          attendance_date: new Date().toLocaleDateString(),
-          parent_name: 'Parent'
+          attendance_date: new Date().toLocaleDateString()
         }));
 
       if (emailsToSend.length === 0) {
-        setEmailStatus({ type: 'error', message: '❌ No parent emails configured' });
+        setEmailStatus({ type: 'error', message: '❌ No student emails configured' });
         setSendingEmails(false);
         return;
       }
@@ -189,7 +188,7 @@ export default function App() {
       if (!emailService.verifyConfiguration()) {
         setEmailStatus({
           type: 'error',
-          message: '❌ EmailJS not configured. Please add your EmailJS credentials.'
+          message: '❌ EmailJS not configured. Check services/emailService.ts for setup instructions.'
         });
         setSendingEmails(false);
         return;
@@ -198,10 +197,18 @@ export default function App() {
       const results = await emailService.sendBulkAbsenceAlerts(emailsToSend);
       setSendingEmails(false);
 
+      // Calculate which reg nos had their emails sent successfully
+      const sentRegNos = absentList
+        .filter(student => emailsToSend.some(e => e.registration_number === student.regNo))
+        .slice(0, results.sent)
+        .map(student => student.regNo);
+      
+      onEmailsSent?.(sentRegNos);
+
       if (results.sent > 0) {
         setEmailStatus({
           type: 'success',
-          message: `✅ ${results.sent} alerts sent successfully!${results.failed > 0 ? ` (${results.failed} failed)` : ''}`
+          message: `✅ Absence alerts sent to ${results.sent} students successfully!${results.failed > 0 ? ` (${results.failed} failed)` : ''}`
         });
       } else {
         setEmailStatus({

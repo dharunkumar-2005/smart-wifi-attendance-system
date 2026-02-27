@@ -14,7 +14,7 @@ export interface EmailParams {
   student_name: string;
   registration_number: string;
   attendance_date: string;
-  parent_name: string;
+  parent_name?: string;
 }
 
 export const emailService = {
@@ -24,11 +24,11 @@ export const emailService = {
   sendAbsenceAlert: async (params: EmailParams): Promise<{ success: boolean; message: string }> => {
     try {
       const templateParams = {
-        parent_name: params.parent_name || 'Parent',
+        to_email: params.parent_email,
         student_name: params.student_name,
         registration_number: params.registration_number,
         attendance_date: params.attendance_date,
-        to_email: params.parent_email,
+        message: `Dear Student,\n\nYou have been marked ABSENT for today's session in the KNCET Portal.\n\nIf this is a mistake, contact your staff immediately.\n\nBest regards,\nKNCET Attendance System`
       };
 
       const response = await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams);
@@ -82,7 +82,7 @@ export const emailService = {
    * Verify email configuration
    */
   verifyConfiguration: (): boolean => {
-    return PUBLIC_KEY !== 'your_emailjs_public_key' && SERVICE_ID && TEMPLATE_ID;
+    return PUBLIC_KEY !== 'your_emailjs_public_key' && !!SERVICE_ID && !!TEMPLATE_ID;
   },
 
   /**

@@ -13,7 +13,7 @@ interface AdminDashboardComponentProps {
   records: any[];
   allStudents: Record<string, any>;
   onLogout: () => void;
-  onSendEmails?: () => void;
+  onSendEmails?: (callback?: (sentRegNos: string[]) => void) => void;
   onExport?: () => void;
   onAddStudent?: (studentData: { name: string; regNo: string; email: string }) => Promise<void>;
   onDeleteStudent?: (regNo: string) => Promise<void>;
@@ -41,6 +41,7 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
   const [confirmDeleteRegNo, setConfirmDeleteRegNo] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [resettingDevice, setResettingDevice] = useState<string | null>(null);
+  const [emailsSentTo, setEmailsSentTo] = useState<Set<string>>(new Set());
   
   // Clear Attendance State
   const [clearConfirmStage, setClearConfirmStage] = useState(0); // 0 = no, 1 = first confirm, 2 = second confirm
@@ -216,10 +217,12 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                 <h3 className="text-lg font-black mb-6">ACTIONS</h3>
                 <div className="space-y-3">
                   <button
-                    onClick={onSendEmails}
-                    className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_20px_#ff007a] transition-all"
+                    onClick={() => onSendEmails?.((regNos) => {
+                      setEmailsSentTo(new Set([...emailsSentTo, ...regNos]));
+                    })}
+                    className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_30px_#ff007a] transition-all active:scale-95"
                   >
-                    📧 SEND ALERTS
+                    📧 SEND ABSENCE ALERTS
                   </button>
                   <button
                     onClick={onExport}
@@ -269,6 +272,7 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                       key={student.regNo}
                       name={student.name}
                       regNo={student.regNo}
+                      emailSent={emailsSentTo.has(student.regNo)}
                     />
                   ))}
                 </div>
@@ -449,12 +453,14 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                   </button>
                 </div>
                 <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-                  <p className="text-gray-400 text-sm mb-4">Send absence notifications to all parents via email</p>
+                  <p className="text-gray-400 text-sm mb-4">Send absence notifications to all absent students via email</p>
                   <button
-                    onClick={onSendEmails}
-                    className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm"
+                    onClick={() => onSendEmails?.((regNos) => {
+                      setEmailsSentTo(new Set([...emailsSentTo, ...regNos]));
+                    })}
+                    className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_30px_#ff007a] transition-all active:scale-95"
                   >
-                    📧 SEND ALERTS
+                    📧 SEND ABSENCE ALERTS
                   </button>
                 </div>
               </div>

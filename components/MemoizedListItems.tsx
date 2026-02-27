@@ -58,10 +58,11 @@ MemoizedPresentItem.displayName = 'MemoizedPresentItem';
 interface AbsentItemProps {
   name: string;
   regNo: string;
+  emailSent?: boolean;
 }
 
 export const MemoizedAbsentItem = React.memo<AbsentItemProps>(
-  ({ name, regNo }) => (
+  ({ name, regNo, emailSent }) => (
     <div
       className="bg-gradient-to-r from-red-500/10 to-transparent border border-red-500/30 p-4 rounded-2xl flex items-center justify-between hover:border-red-500/80 transition-all will-change-transform"
       style={{ transform: 'translateZ(0)' }}
@@ -70,15 +71,23 @@ export const MemoizedAbsentItem = React.memo<AbsentItemProps>(
         <h4 className="font-bold text-sm text-white">{name}</h4>
         <p className="text-xs text-gray-400 font-mono">{regNo}</p>
       </div>
-      <span className="text-xs bg-red-500/20 text-red-400 px-3 py-1 rounded-lg font-bold">
-        ABSENT
-      </span>
+      <div className="flex items-center gap-2">
+        {emailSent && (
+          <span className="text-xs bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-lg font-bold flex items-center gap-1">
+            ✉️ MAIL SENT
+          </span>
+        )}
+        <span className="text-xs bg-red-500/20 text-red-400 px-3 py-1 rounded-lg font-bold">
+          ABSENT
+        </span>
+      </div>
     </div>
   ),
   (prevProps, nextProps) => {
     return (
       prevProps.regNo === nextProps.regNo &&
-      prevProps.name === nextProps.name
+      prevProps.name === nextProps.name &&
+      prevProps.emailSent === nextProps.emailSent
     );
   }
 );
