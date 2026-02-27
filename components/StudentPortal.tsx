@@ -1,11 +1,13 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { LogOut, Camera, Send, Loader } from 'lucide-react';
 import { getOptimizedCameraConstraints } from '../utils/performanceUtils';
+import { getStoredDeviceFingerprint } from '../utils/deviceFingerprint';
+import { getDatabase, ref, get, set } from 'firebase/database';
 
 interface StudentPortalNewProps {
   onLogout: () => void;
   // updated to return a promise so parent can report back errors
-  onSubmitAttendance?: (data: { name: string; regNo: string; photo: string; time: string }) => Promise<void>;
+  onSubmitAttendance?: (data: { name: string; regNo: string; photo: string; time: string; date: string; deviceId: string }) => Promise<void>;
 }
 
 const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitAttendance }) => {
@@ -20,6 +22,7 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
   const [submitMessage, setSubmitMessage] = useState<{ type: 'idle' | 'success' | 'error'; text: string }>({ type: 'idle', text: '' });
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [initializing, setInitializing] = useState(false);
+  const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
 
   // refs to avoid unnecessary rerenders while camera active
   const cameraActiveRef = useRef(cameraActive);
@@ -141,9 +144,10 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
     initializeCamera();
   }, [initializeCamera]);
 
-  // Submit attendance
+  // Submit attendance with device lock and daily limit checks
   // timestamp ref for simple debounce
   const lastSubmitRef = useRef<number>(0);
+  const db = getDatabase();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,24 +174,79 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
       return;
     }
 
+    if (!deviceFingerprint) {
+      setSubmitMessage({ type: 'error', text: '❌ Could not identify device. Please refresh and try again.' });
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitMessage({ type: 'idle', text: '' });
 
     try {
-      const timestamp = new Date().toLocaleTimeString();
-      const attendanceData = {
-        name: studentName.trim(),
-        regNo: regNumber.trim().toUpperCase(),
-        photo: capturedPhoto,     // match App handler expectation
-        time: timestamp
-      };
+      const regNoUpper = regNumber.trim().toUpperCase();
+      const today = new Date().toLocaleDateString();
 
-      // debounce guard: once already submitting, ignore extra taps
-      if (isSubmitting) return;
+      // Check 1: Device Lock - verify this reg no is not locked to a different device
+      const studentRef = ref(db, `students/${regNoUpper}`);
+      const studentSnapshot = await get(studentRef);
+      const studentData = studentSnapshot.val();
+
+      if (studentData && studentData.deviceId && studentData.deviceId !== deviceFingerprint) {
+        setSubmitMessage({
+          type: 'error',
+          text: `❌ Device Lock Error\nThis Register Number is already locked to another device.\nPlease contact Staff.`
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Check 2: Daily Limit - verify attendance not already submitted today
+      const attendanceRef = ref(db, 'attendance');
+      const attendanceSnapshot = await get(attendanceRef);
+      const attendanceData = attendanceSnapshot.val();
+
+      if (attendanceData) {
+        const attendanceArray = Array.isArray(attendanceData) ? attendanceData : Object.values(attendanceData);
+        const alreadyPresent = (attendanceArray as any[]).some(
+          (record: any) =>
+            record.regNo === regNoUpper &&
+            record.date === today
+        );
+
+        if (alreadyPresent) {
+          setSubmitMessage({
+            type: 'error',
+            text: `⚠️ Daily Limit Reached\nYou have already registered attendance for today!`
+          });
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      // All checks passed - proceed with submission
+      const timestamp = new Date().toLocaleTimeString();
+      const newAttendanceData = {
+        name: studentName.trim(),
+        regNo: regNoUpper,
+        photo: capturedPhoto,
+        time: timestamp,
+        date: today,
+        deviceId: deviceFingerprint
+      };
 
       // Call the submission handler and wait for it to finish
       if (onSubmitAttendance) {
-        await onSubmitAttendance(attendanceData);
+        await onSubmitAttendance(newAttendanceData);
+      }
+
+      // Also update student record with device ID if new
+      if (!studentData || !studentData.deviceId) {
+        await set(studentRef, {
+          ...(studentData || {}),
+          name: studentName.trim(),
+          deviceId: deviceFingerprint,
+          firstAttendance: new Date().toISOString()
+        });
       }
 
       setSubmitMessage({
@@ -211,6 +270,15 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
       setIsSubmitting(false);
     }
   };
+
+  // Load device fingerprint on mount
+  useEffect(() => {
+    const loadFingerprint = async () => {
+      const fp = await getStoredDeviceFingerprint();
+      setDeviceFingerprint(fp);
+    };
+    loadFingerprint();
+  }, []);
 
   // clear camera when component unmounts; camera is started only on user action
   useEffect(() => {

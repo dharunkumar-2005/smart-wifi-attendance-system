@@ -222,17 +222,19 @@ export default function App() {
 
   // --- Handle Student Attendance Submission ---
   // this function returns a promise so that the caller (StudentPortal) can react to success/failure
-  const handleStudentSubmitAttendance = async (data: { name: string; regNo: string; photo: string; time: string }) => {
+  const handleStudentSubmitAttendance = async (data: { name: string; regNo: string; photo: string; time: string; date: string; deviceId: string }) => {
     try {
       const submissionData = {
         name: data.name,
         regNo: data.regNo.toUpperCase(),
         face: data.photo,
         time: data.time,
-        date: new Date().toLocaleDateString()
+        date: data.date,
+        deviceId: data.deviceId,
+        submittedAt: new Date().toISOString()
       };
       
-      // Push to Firebase attendance
+      // Push to Firebase attendance with security checks already done in StudentPortal
       const attendanceRef = ref(db, `attendance/${Date.now()}`);
       await set(attendanceRef, submissionData);
     } catch (error) {
