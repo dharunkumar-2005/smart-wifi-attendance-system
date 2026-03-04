@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, remove, off } from "firebase/database";
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db as firestoreDb } from './components/firebase';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 import { Mail, BarChart3, Users, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
@@ -236,14 +238,15 @@ export default function App() {
         regNo: data.regNo.toUpperCase(),
         face: data.photo,
         time: data.time,
-        date: data.date,
+        // store date in YYYY-MM-DD format
+        date: data.date || new Date().toISOString().split('T')[0],
         deviceId: data.deviceId,
-        submittedAt: new Date().toISOString()
+        // accurate server timestamp
+        timestamp: serverTimestamp()
       };
-      
-      // Push to Firebase attendance with security checks already done in StudentPortal
-      const attendanceRef = ref(db, `attendance/${Date.now()}`);
-      await set(attendanceRef, submissionData);
+
+      // Save to Firestore attendance collection
+      await addDoc(collection(firestoreDb, 'attendance'), submissionData);
     } catch (error) {
       console.error('Error submitting attendance:', error);
       // rethrow so UI can display proper error

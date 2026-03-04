@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import emailjs from '@emailjs/browser';
+import { emailService } from '../services/emailService';
 import { LogOut, Trash2, Plus, Search, Mail, Download, Users, AlertTriangle, Lock, Settings, Unlock } from 'lucide-react';
 import PhotoModal from './PhotoModal';
 import { MemoizedPresentItem, MemoizedAbsentItem, MemoizedStudentListItem } from './MemoizedListItems';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 import { validatePasswordStrength, hashPassword, comparePassword } from '../utils/passwordUtils';
-import { getDatabase, ref, set, onValue, off, update } from 'firebase/database';
+import { collection, doc, getDoc, getDocs, query, where, updateDoc, setDoc } from 'firebase/firestore';
+import { db } from './firebase';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -48,31 +49,57 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
   const [clearConfirmStage, setClearConfirmStage] = useState(0); // 0 = no, 1 = first confirm, 2 = second confirm
   const [clearingAttendance, setClearingAttendance] = useState(false);
 
-  // Helper: send single absence email via EmailJS for debugging/status
-  const sendAbsenceEmail = (name: string, regNo: string, email: string) => {
-    const templateParams = {
-      student_name: name,
-      registration_number: regNo,
-      attendance_date: new Date().toLocaleDateString(),
-      to_email: email
-    };
-    emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', templateParams, 'YOUR_PUBLIC_KEY')
-      .then(() => console.log('Email Sent Successfully to', email))
-      .catch((error) => console.error('Email Failed', error));
+  // Send single absence email via emailService for debugging/status
+  const sendAbsenceEmail = async (name: string, regNo: string, email: string) => {
+    try {
+      const params = {
+        parent_email: email,
+        student_name: name,
+        registration_number: regNo,
+        attendance_date: new Date().toISOString().split('T')[0]
+      };
+      const resp = await emailService.sendAbsenceAlert(params);
+      if (resp.success) console.log('Email sent to', email);
+      else console.error('Email failed for', email, resp.message);
+    } catch (err) {
+      console.error('Email send error', err);
+    }
   };
 
   // wrapper used by buttons to send alerts and track state
-  const triggerAbsenceAlerts = () => {
-    // send individual emails for visibility
-    absentList.forEach(student => {
-      if (student.email) {
-        sendAbsenceEmail(student.name, student.regNo, student.email);
+  const triggerAbsenceAlerts = async () => {
+    try {
+      // compute absentee list from props as a quick path
+      const emailsToSend = absentList
+        .filter(s => (s as any).email)
+        .map(s => ({
+          parent_email: (s as any).email,
+          student_name: s.name,
+          registration_number: s.regNo,
+          attendance_date: new Date().toISOString().split('T')[0]
+        }));
+
+      if (emailsToSend.length === 0) {
+        setMessage({ type: 'error', text: '❌ No configured parent emails to send' });
+        return;
       }
-    });
-    // also call parent handler if provided
-    onSendEmails?.((regNos) => {
-      setEmailsSentTo(new Set([...emailsSentTo, ...regNos]));
-    });
+
+      if (!emailService.verifyConfiguration()) {
+        setMessage({ type: 'error', text: '❌ EmailJS not configured. Check services/emailService.ts' });
+        return;
+      }
+
+      const results = await emailService.sendBulkAbsenceAlerts(emailsToSend);
+      // mark sent regNos in local state
+      const sent = absentList.slice(0, results.sent).map(s => s.regNo);
+      setEmailsSentTo(new Set([...Array.from(emailsSentTo), ...sent]));
+      onSendEmails?.(sent);
+      if (results.sent > 0) setMessage({ type: 'success', text: `✅ Sent ${results.sent} absence alerts` });
+      if (results.failed > 0) setMessage({ type: 'error', text: `❌ ${results.failed} failed to send` });
+    } catch (err) {
+      console.error(err);
+      setMessage({ type: 'error', text: `❌ Error sending alerts: ${err instanceof Error ? err.message : ''}` });
+    }
   };
 
   // Change Password State
@@ -84,39 +111,75 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
 
   // load password hash from firebase so change-password form validates against latest value
   useEffect(() => {
-    const db = getDatabase();
-    const passwordRef = ref(db, 'admin/config/password');
-    const listener = onValue(passwordRef, (snapshot) => {
-      const val = snapshot.val();
-      if (val && val.hash) {
-        setStoredPasswordHash(val.hash);
+    // Try to load admin password hash from Firestore once
+    (async () => {
+      try {
+        const cfgDoc = doc(db, 'admin', 'config');
+        const snap = await getDoc(cfgDoc);
+        if (snap.exists()) {
+          const val = snap.data();
+          if (val && (val as any).password && (val as any).password.hash) {
+            setStoredPasswordHash((val as any).password.hash);
+          }
+        }
+      } catch (err) {
+        // ignore silently
       }
-    });
-
-    return () => {
-      off(passwordRef);
-    };
+    })();
   }, []);
 
   // Handle Device Lock Reset
   const handleResetDeviceLock = async (regNo: string) => {
     setResettingDevice(regNo);
     try {
-      const db = getDatabase();
-      const studentRef = ref(db, `students/${regNo}`);
-      await update(studentRef, { deviceId: null });
-      setMessage({
-        type: 'success',
-        text: `✅ Device lock reset for ${regNo}. This student can now use a different device.`
-      });
+      const studentDoc = doc(db, 'students', regNo);
+      await updateDoc(studentDoc, { deviceId: '' });
+      setMessage({ type: 'success', text: `✅ Device lock reset for ${regNo}.` });
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
-      setMessage({
-        type: 'error',
-        text: `❌ Error resetting device lock: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
+      setMessage({ type: 'error', text: `❌ Error resetting device lock: ${error instanceof Error ? error.message : 'Unknown error'}` });
     } finally {
       setResettingDevice(null);
+    }
+  };
+
+  // Find absentees by querying Firestore: students without attendance record today
+  const sendAbsenteeAlerts = async (): Promise<{ sent: number; failed: number; errors: string[] }> => {
+    const results = { sent: 0, failed: 0, errors: [] as string[] };
+    try {
+      const todayISO = new Date().toISOString().split('T')[0];
+      // load all students
+      const studentsSnap = await getDocs(collection(db, 'students'));
+      const students = studentsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+      // load attendance for today
+      const attendanceQ = query(collection(db, 'attendance'), where('date', '==', todayISO));
+      const attendanceSnap = await getDocs(attendanceQ);
+      const presentRegSet = new Set(attendanceSnap.docs.map(d => (d.data() as any).regNo));
+
+      const absentees = students.filter(s => !presentRegSet.has(s.id));
+
+      const emailsToSend = absentees
+        .filter(s => s.parentEmail || s.email)
+        .map(s => ({
+          parent_email: s.parentEmail || s.email,
+          student_name: s.name,
+          registration_number: s.id,
+          attendance_date: todayISO
+        }));
+
+      if (emailsToSend.length === 0) return results;
+
+      if (!emailService.verifyConfiguration()) {
+        results.errors.push('EmailJS not configured');
+        return results;
+      }
+
+      const bulk = await emailService.sendBulkAbsenceAlerts(emailsToSend);
+      return bulk;
+    } catch (err) {
+      results.errors.push(err instanceof Error ? err.message : 'Unknown error');
+      return results;
     }
   };
 
@@ -245,7 +308,20 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                 <h3 className="text-lg font-black mb-6">ACTIONS</h3>
                 <div className="space-y-3">
                   <button
-                    onClick={triggerAbsenceAlerts}
+                    onClick={async () => {
+                      setMessage({ type: 'idle', text: 'Sending absence alerts...' });
+                      const res = await sendAbsenteeAlerts();
+                      if (res.sent > 0) {
+                        setMessage({ type: 'success', text: `✅ Sent ${res.sent} alerts` });
+                        const sentRegNos: string[] = []; // we don't have mapping here
+                        onSendEmails?.(sentRegNos);
+                      } else if (res.failed > 0) {
+                        setMessage({ type: 'error', text: `❌ ${res.failed} failed to send` });
+                      } else {
+                        setMessage({ type: 'error', text: `❌ No alerts sent` });
+                      }
+                      setTimeout(() => setMessage(null), 4000);
+                    }}
                     className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_30px_#ff007a] transition-all active:scale-95"
                   >
                     📧 SEND ABSENCE ALERTS
@@ -481,7 +557,14 @@ const AdminDashboardComponent: React.FC<AdminDashboardComponentProps> = ({
                 <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
                   <p className="text-gray-400 text-sm mb-4">Send absence notifications to all absent students via email</p>
                   <button
-                    onClick={triggerAbsenceAlerts}
+                    onClick={async () => {
+                      setMessage({ type: 'idle', text: 'Sending absence alerts...' });
+                      const res = await sendAbsenteeAlerts();
+                      if (res.sent > 0) setMessage({ type: 'success', text: `✅ Sent ${res.sent} alerts` });
+                      else if (res.failed > 0) setMessage({ type: 'error', text: `❌ ${res.failed} failed to send` });
+                      else setMessage({ type: 'error', text: '❌ No alerts sent' });
+                      setTimeout(() => setMessage(null), 4000);
+                    }}
                     className="w-full py-3 bg-gradient-to-r from-[#ff007a] to-[#ff1493] text-white rounded-xl font-bold text-sm hover:shadow-[0_0_30px_#ff007a] transition-all active:scale-95"
                   >
                     📧 SEND ABSENCE ALERTS

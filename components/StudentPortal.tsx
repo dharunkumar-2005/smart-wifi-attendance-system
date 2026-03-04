@@ -2,7 +2,8 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { LogOut, Camera, Send, Loader } from 'lucide-react';
 import { getOptimizedCameraConstraints } from '../utils/performanceUtils';
 import { getStoredDeviceFingerprint } from '../utils/deviceFingerprint';
-import { getDatabase, ref, get, set } from 'firebase/database';
+import { doc, getDoc, setDoc, query, collection, where, getDocs } from 'firebase/firestore';
+import { db } from './firebase';
 
 interface StudentPortalNewProps {
   onLogout: () => void;
@@ -147,7 +148,6 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
   // Submit attendance with device lock and daily limit checks
   // timestamp ref for simple debounce
   const lastSubmitRef = useRef<number>(0);
-  const db = getDatabase();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,12 +184,13 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
 
     try {
       const regNoUpper = regNumber.trim().toUpperCase();
-      const today = new Date().toLocaleDateString();
+      // Use ISO date (YYYY-MM-DD) for consistent queries
+      const todayISO = new Date().toISOString().split('T')[0];
 
-      // Check 1: Device Lock - verify this reg no is not locked to a different device
-      const studentRef = ref(db, `students/${regNoUpper}`);
-      const studentSnapshot = await get(studentRef);
-      const studentData = studentSnapshot.val();
+      // Check 1: Device Lock - verify this reg no is not locked to a different device (Firestore)
+      const studentDocRef = doc(db, 'students', regNoUpper);
+      const studentSnapshot = await getDoc(studentDocRef);
+      const studentData = studentSnapshot.exists() ? studentSnapshot.data() : null;
 
       if (studentData && studentData.deviceId && studentData.deviceId !== deviceFingerprint) {
         setSubmitMessage({
@@ -200,37 +201,31 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
         return;
       }
 
-      // Check 2: Daily Limit - verify attendance not already submitted today
-      const attendanceRef = ref(db, 'attendance');
-      const attendanceSnapshot = await get(attendanceRef);
-      const attendanceData = attendanceSnapshot.val();
-
-      if (attendanceData) {
-        const attendanceArray = Array.isArray(attendanceData) ? attendanceData : Object.values(attendanceData);
-        const alreadyPresent = (attendanceArray as any[]).some(
-          (record: any) =>
-            record.regNo === regNoUpper &&
-            record.date === today
-        );
-
-        if (alreadyPresent) {
-          setSubmitMessage({
-            type: 'error',
-            text: `⚠️ Daily Limit Reached\nYou have already registered attendance for today!`
-          });
-          setIsSubmitting(false);
-          return;
-        }
+      // Check 2: Daily Limit - query Firestore attendance collection for same regNo and date
+      const attendanceQ = query(
+        collection(db, 'attendance'),
+        where('regNo', '==', regNoUpper),
+        where('date', '==', todayISO)
+      );
+      const attendanceSnap = await getDocs(attendanceQ);
+      if (!attendanceSnap.empty) {
+        setSubmitMessage({
+          type: 'error',
+          text: `⚠️ Daily Limit Reached\nYou have already registered attendance for today!`
+        });
+        setIsSubmitting(false);
+        return;
       }
 
       // All checks passed - proceed with submission
       const timestamp = new Date().toLocaleTimeString();
+      const todayISOForRecord = new Date().toISOString().split('T')[0];
       const newAttendanceData = {
         name: studentName.trim(),
         regNo: regNoUpper,
         photo: capturedPhoto,
         time: timestamp,
-        date: today,
+        date: todayISOForRecord,
         deviceId: deviceFingerprint
       };
 
@@ -239,14 +234,14 @@ const StudentPortalNew: React.FC<StudentPortalNewProps> = ({ onLogout, onSubmitA
         await onSubmitAttendance(newAttendanceData);
       }
 
-      // Also update student record with device ID if new
+      // Also update student record with device ID if new (merge to preserve other fields)
       if (!studentData || !studentData.deviceId) {
-        await set(studentRef, {
+        await setDoc(studentDocRef, {
           ...(studentData || {}),
           name: studentName.trim(),
           deviceId: deviceFingerprint,
           firstAttendance: new Date().toISOString()
-        });
+        }, { merge: true });
       }
 
       setSubmitMessage({
