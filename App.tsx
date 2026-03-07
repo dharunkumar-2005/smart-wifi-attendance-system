@@ -1,9 +1,7 @@
-// @ts-nocheck
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue, remove, off } from "firebase/database";
+import React, { useState, useEffect, useCallback, useMemo, ErrorInfo } from 'react';
+import { ref, set, onValue, remove, off } from "firebase/database";
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db as firestoreDb } from './components/firebase';
+import { db as firestoreDb, realtimeDb } from './components/firebase';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import LandingPage from './components/LandingPage';
 import StaffDashboard from './components/StaffDashboard';
@@ -12,26 +10,8 @@ import PhotoModal from './components/PhotoModal';
 import { excelService } from './services/excelService';
 import { emailService } from './services/emailService';
 
+// Register Chart.js plugins
 ChartJS.register(ArcElement, Tooltip, Legend);
-
-// NOTE: during development make sure your Realtime Database security rules allow reads/writes
-// for testing, e.g.:
-// {
-//   "rules": {
-//     ".read": true,
-//     ".write": true
-//   }
-// }
-// Remember to lock them down before going to production.
-const firebaseConfig = {
-  apiKey: "AIzaSyCypMJilnNAD3KkM01tIh5AR7OXir4Hd0M",
-  authDomain: "kncet-attendance.firebaseapp.com",
-  databaseURL: "https://kncet-attendance-default-rtdb.firebaseio.com",
-  projectId: "kncet-attendance",
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
 
 interface StudentRecord {
   name: string;
@@ -49,18 +29,25 @@ interface Student {
 
 interface AbsentStudent extends StudentRecord {
   parentEmail?: string;
+  email?: string;
 }
 
 type AppView = 'landing' | 'staff' | 'student';
 
-// authorized hotspot IP address
+// authorized hotspot IP address (for production security)
 const AUTHORIZED_IP = '210.16.87.86';
-// Disable IP check for production/Vercel deployment
+// IMPORTANT: Set to true to enable IP check in production only
+// Set to false for development/testing on mobile
 const ENABLE_IP_CHECK = false;
+
+// Enable debug mode to see IP info
+const DEBUG_MODE = true;
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('landing');
   const [ipCheckStatus, setIpCheckStatus] = useState<'pending' | 'authorized' | 'denied'>(ENABLE_IP_CHECK ? 'pending' : 'authorized');
+  const [userIP, setUserIP] = useState<string | null>(null);
+  const [firebaseError, setFirebaseError] = useState<string | null>(null);
   const [records, setRecords] = useState<StudentRecord[]>([]);
   const [allStudents, setAllStudents] = useState<Record<string, Student>>({});
   const [selectedPhoto, setSelectedPhoto] = useState<{ url: string; name: string; regNo: string } | null>(null);
@@ -69,20 +56,35 @@ export default function App() {
 
   // perform IP gatekeeper before rendering anything else
   useEffect(() => {
-    if (!ENABLE_IP_CHECK) return; // Skip IP check for production
-    
     const checkIp = async () => {
       try {
         const resp = await fetch('https://api.ipify.org?format=json');
         const data = await resp.json();
-        if (data.ip === AUTHORIZED_IP) {
-          setIpCheckStatus('authorized');
+        const detectedIP = data.ip;
+        setUserIP(detectedIP);
+        
+        if (DEBUG_MODE) {
+          console.log('🔍 Your IP Address:', detectedIP);
+          console.log('🔐 Authorized IP:', AUTHORIZED_IP);
+        }
+        
+        if (ENABLE_IP_CHECK) {
+          if (detectedIP === AUTHORIZED_IP) {
+            setIpCheckStatus('authorized');
+            console.log('✅ IP authorized');
+          } else {
+            setIpCheckStatus('denied');
+            console.log('❌ IP not authorized');
+          }
         } else {
-          setIpCheckStatus('denied');
+          // Disable IP check for development
+          setIpCheckStatus('authorized');
+          if (DEBUG_MODE) console.log('ℹ️ IP check disabled for development');
         }
       } catch (err) {
-        console.error('IP check failed', err);
-        setIpCheckStatus('denied');
+        console.error('❌ IP check failed', err);
+        // Allow access anyway if IP check fails
+        setIpCheckStatus('authorized');
       }
     };
     checkIp();
@@ -90,28 +92,42 @@ export default function App() {
 
   useEffect(() => {
     if (ipCheckStatus !== 'authorized') return;
-    // Fetch all students from Firebase
-    const studentsRef = ref(db, 'students');
-    const unsubscribeStudents = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
-      setAllStudents(data || {});
-    });
+    
+    try {
+      setFirebaseError(null); // Clear previous errors
+      
+      // Fetch all students from Firebase
+      const studentsRef = ref(realtimeDb, 'students');
+      const unsubscribeStudents = onValue(studentsRef, (snapshot) => {
+        const data = snapshot.val();
+        setAllStudents(data || {});
+      }, (error) => {
+        console.error('❌ Error fetching students:', error);
+        setFirebaseError('Failed to fetch students: ' + error.message);
+      });
 
-    // Fetch today's attendance records
-    const attendanceRef = ref(db, 'attendance');
-    const unsubscribeAttendance = onValue(attendanceRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const attendanceArray = Array.isArray(data) ? data : Object.values(data);
-        setRecords(attendanceArray.reverse() as StudentRecord[]);
-      }
-    });
+      // Fetch today's attendance records
+      const attendanceRef = ref(realtimeDb, 'attendance');
+      const unsubscribeAttendance = onValue(attendanceRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          const attendanceArray = Array.isArray(data) ? data : Object.values(data);
+          setRecords(attendanceArray.reverse() as StudentRecord[]);
+        }
+      }, (error) => {
+        console.error('❌ Error fetching attendance:', error);
+        setFirebaseError('Failed to fetch attendance: ' + error.message);
+      });
 
-    // Cleanup function - properly unsubscribe from listeners to prevent memory leaks
-    return () => {
-      off(studentsRef);
-      off(attendanceRef);
-    };
+      // Cleanup function - properly unsubscribe from listeners to prevent memory leaks
+      return () => {
+        off(studentsRef);
+        off(attendanceRef);
+      };
+    } catch (error) {
+      console.error('❌ Error setting up Firebase listeners:', error);
+      setFirebaseError('Failed to connect to database: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   }, [ipCheckStatus]);
 
   // TEMPORARY: Upload student list to Firestore
@@ -291,7 +307,7 @@ export default function App() {
         throw new Error('Name and Registration Number are required');
       }
 
-      const studentRef = ref(db, `students/${regNoUpper}`);
+      const studentRef = ref(realtimeDb, `students/${regNoUpper}`);
       await set(studentRef, {
         name: studentData.name.trim(),
         email: studentData.email.trim() || null,
@@ -307,7 +323,7 @@ export default function App() {
   const handleDeleteStudent = async (regNo: string) => {
     try {
       const regNoUpper = regNo.toUpperCase().trim();
-      const studentRef = ref(db, `students/${regNoUpper}`);
+      const studentRef = ref(realtimeDb, `students/${regNoUpper}`);
       await remove(studentRef);
     } catch (error) {
       throw error instanceof Error ? error : new Error('Failed to delete student');
@@ -317,7 +333,7 @@ export default function App() {
   // --- Clear All Attendance Records ---
   const handleClearAttendance = async () => {
     try {
-      const attendanceRef = ref(db, 'attendance');
+      const attendanceRef = ref(realtimeDb, 'attendance');
       await remove(attendanceRef);
     } catch (error) {
       throw error instanceof Error ? error : new Error('Failed to clear attendance');
@@ -335,9 +351,41 @@ export default function App() {
   if (ipCheckStatus === 'denied') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-black text-white p-4">
-        <div className="text-center">
+        <div className="text-center max-w-md">
           <h1 className="text-3xl font-black mb-4 text-[#ff007a]">Access Denied</h1>
-          <p className="text-lg">Unauthorized Network! Please connect to the KNCET Official Hotspot to access this portal.</p>
+          <p className="text-lg mb-6">Unauthorized Network! Please connect to the KNCET Official Hotspot to access this portal.</p>
+          {DEBUG_MODE && userIP && (
+            <div className="bg-gray-800 p-4 rounded text-left text-sm mb-4">
+              <p className="text-gray-400">Debug Info:</p>
+              <p className="text-gray-300">Your IP: {userIP}</p>
+              <p className="text-gray-300">Authorized IP: {AUTHORIZED_IP}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Show Firebase error if any
+  if (firebaseError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
+        <div className="bg-white p-6 rounded-lg shadow-lg max-w-md">
+          <h1 className="text-2xl font-bold text-red-600 mb-4">⚠️ Connection Error</h1>
+          <p className="text-gray-700 mb-4">{firebaseError}</p>
+          <button
+            onClick={() => { setFirebaseError(null); window.location.reload(); }}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition w-full"
+          >
+            Retry
+          </button>
+          {DEBUG_MODE && (
+            <div className="mt-4 bg-gray-100 p-3 rounded text-xs text-gray-700">
+              <p className="font-bold mb-2">Debug: IP Check Status</p>
+              <p>IP: {userIP || 'Detecting...'}</p>
+              <p>Status: {ipCheckStatus}</p>
+            </div>
+          )}
         </div>
       </div>
     );

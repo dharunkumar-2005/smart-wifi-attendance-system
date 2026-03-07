@@ -1,17 +1,22 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCypMJilnNAD3KkM01tIh5AR7OXir4Hd0M",
+  authDomain: "kncet-attendance.firebaseapp.com",
+  databaseURL: "https://kncet-attendance-default-rtdb.firebaseio.com",
+  projectId: "kncet-attendance",
 };
 
-// Initialize Firebase
+// Initialize Firebase (only once)
 const app = initializeApp(firebaseConfig);
 
-// EXPORT 'db' - This is what AdminDashboard is looking for
+// Export Firestore db
 export const db = getFirestore(app);
+
+// Export Realtime Database
+export const realtimeDb = getDatabase(app);
+
+// Export app for reference
+export const firebaseApp = app;
