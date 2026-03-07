@@ -55,10 +55,12 @@ type AppView = 'landing' | 'staff' | 'student';
 
 // authorized hotspot IP address
 const AUTHORIZED_IP = '210.16.87.86';
+// Disable IP check for production/Vercel deployment
+const ENABLE_IP_CHECK = false;
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('landing');
-  const [ipCheckStatus, setIpCheckStatus] = useState<'pending' | 'authorized' | 'denied'>('pending');
+  const [ipCheckStatus, setIpCheckStatus] = useState<'pending' | 'authorized' | 'denied'>(ENABLE_IP_CHECK ? 'pending' : 'authorized');
   const [records, setRecords] = useState<StudentRecord[]>([]);
   const [allStudents, setAllStudents] = useState<Record<string, Student>>({});
   const [selectedPhoto, setSelectedPhoto] = useState<{ url: string; name: string; regNo: string } | null>(null);
@@ -67,6 +69,8 @@ export default function App() {
 
   // perform IP gatekeeper before rendering anything else
   useEffect(() => {
+    if (!ENABLE_IP_CHECK) return; // Skip IP check for production
+    
     const checkIp = async () => {
       try {
         const resp = await fetch('https://api.ipify.org?format=json');
