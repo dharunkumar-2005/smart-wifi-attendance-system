@@ -5,8 +5,6 @@ import { getDatabase, ref, set, onValue, remove, off } from "firebase/database";
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db as firestoreDb } from './components/firebase';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
-import { Doughnut } from 'react-chartjs-2';
-import { Mail, BarChart3, Users, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
 import LandingPage from './components/LandingPage';
 import StaffDashboard from './components/StaffDashboard';
 import StudentPortalNew from './components/StudentPortal';
@@ -111,6 +109,33 @@ export default function App() {
       off(attendanceRef);
     };
   }, [ipCheckStatus]);
+
+  // TEMPORARY: Upload student list to Firestore
+  useEffect(() => {
+    const uploadStudents = async () => {
+      const studentNames = [
+        'Ashan Mohamed A',
+        'Dharunkumar M',
+        'Manoj S'
+        // Add more student names here as needed
+      ];
+
+      try {
+        for (const name of studentNames) {
+          await addDoc(collection(firestoreDb, 'students'), {
+            name: name,
+            createdAt: serverTimestamp()
+          });
+        }
+        console.log('Students uploaded to Firestore successfully');
+      } catch (error) {
+        console.error('Error uploading students:', error);
+      }
+    };
+
+    // Uncomment the line below to run the upload (remove after use)
+    // uploadStudents();
+  }, []);
 
   // Calculate attendance metrics
   const totalStudents = Object.keys(allStudents).length;
